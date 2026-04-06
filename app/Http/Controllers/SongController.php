@@ -61,35 +61,42 @@ class SongController extends Controller
             return response()->json(['message' => 'File không hợp lệ hoặc bị lỗi khi upload!'], 422);
         }
 
+        // --- Biến theo dõi để rollback thủ công ---
+        $fileId    = null; // Drive file ID nếu đã upload thành công
+        $newSongId = null; // Song ID nếu đã tạo mới trong DB (không phải bài có sẵn)
+
         try {
-            $originalName = $file->getClientOriginalName();
-            $fileName = time() . '_' . str_replace(' ', '_', $originalName);
-
-            $driveFile = new DriveFile();
-            $driveFile->setName($fileName);
-            $driveFile->setParents([config('services.google_drive.folder_id')]);
-
             $fileContent = file_get_contents($file->getRealPath());
-            $fileHash = hash('sha256', $fileContent);
+            $fileHash    = hash('sha256', $fileContent);
 
-            // Kiểm tra xem file đã tồn tại trên Google Drive hay chưa (dựa trên file_hash)
+            // Kiểm tra file đã tồn tại trên Drive hay chưa (theo hash)
             $existingSong = Song::where('file_hash', $fileHash)->first();
+
             if ($existingSong) {
-                $song = $existingSong;
+                // Bài hát đã có sẵn → dùng lại, không upload Drive, không tạo Song mới
+                $song     = $existingSong;
                 $filePath = $song->file_path;
             } else {
-                // Tải file lên Google Drive và tạo bản ghi mới trong bảng songs
+                // ── BƯỚC 1: Upload lên Google Drive ──────────────────────────
+                $originalName = $file->getClientOriginalName();
+                $fileName     = time() . '_' . str_replace(' ', '_', $originalName);
+
+                $driveFile = new DriveFile();
+                $driveFile->setName($fileName);
+                $driveFile->setParents([config('services.google_drive.folder_id')]);
+
                 $uploadedFile = $this->drive->files->create($driveFile, [
-                    'data' => $fileContent,
-                    'mimeType' => $file->getClientMimeType(),
+                    'data'       => $fileContent,
+                    'mimeType'   => $file->getClientMimeType(),
                     'uploadType' => 'multipart',
                 ]);
 
                 $fileId = $uploadedFile->id;
                 if (!$fileId) {
-                    throw new \Exception('Không thể trích xuất file ID sau khi upload');
+                    throw new \Exception('Không thể trích xuất file ID sau khi upload lên Drive');
                 }
 
+                // ── BƯỚC 2: Cấp quyền public ─────────────────────────────────
                 $permission = new Permission([
                     'type' => 'anyone',
                     'role' => 'reader',
@@ -97,28 +104,29 @@ class SongController extends Controller
                 $this->drive->permissions->create($fileId, $permission);
 
                 $filePath = "https://drive.google.com/uc?export=download&id={$fileId}";
-                $song = Song::create([
+
+                // ── BƯỚC 3: Tạo bản ghi trong DB ─────────────────────────────
+                $song      = Song::create([
                     'file_path' => $filePath,
                     'file_hash' => $fileHash,
                 ]);
+                $newSongId = $song->id; // Ghi nhận để rollback nếu bước sau thất bại
             }
 
-            // Kiểm tra xem user đã có bài hát này trong danh sách hay chưa
+            // ── BƯỚC 4: Liên kết bài hát với user ────────────────────────────
             $userSong = UserSong::where('user_id', $userId)
                 ->where('song_id', $song->id)
                 ->first();
 
             if ($userSong) {
-                // Nếu đã tồn tại, cập nhật custom_name và custom_artist
                 $userSong->update([
-                    'custom_name' => $request->custom_name,
+                    'custom_name'   => $request->custom_name,
                     'custom_artist' => $request->custom_artist,
                 ]);
             } else {
-                // Nếu chưa tồn tại, tạo mới
                 $userSong = $song->userSongs()->create([
-                    'user_id' => $userId,
-                    'custom_name' => $request->custom_name,
+                    'user_id'       => $userId,
+                    'custom_name'   => $request->custom_name,
                     'custom_artist' => $request->custom_artist,
                 ]);
             }
@@ -133,13 +141,41 @@ class SongController extends Controller
                 ]
             ], 201);
         } catch (\Exception $e) {
-            if (isset($fileId)) {
+            // ── ROLLBACK thủ công (ngược thứ tự tạo) ─────────────────────────
+
+            // Rollback Bước 3: Xóa Song khỏi DB nếu VỪA tạo trong request này
+            if ($newSongId) {
                 try {
-                    $this->drive->files->delete($fileId);
-                } catch (\Exception $deleteException) {
-                    Log::error('Lỗi khi xóa file trên Google Drive: ' . $deleteException->getMessage());
+                    Song::destroy($newSongId);
+                    Log::info('Rollback: Đã xóa Song khỏi DB', ['song_id' => $newSongId]);
+                } catch (\Exception $dbEx) {
+                    Log::error('Rollback: Không thể xóa Song khỏi DB', [
+                        'song_id' => $newSongId,
+                        'error'   => $dbEx->getMessage(),
+                    ]);
                 }
             }
+
+            // Rollback Bước 1: Xóa file trên Drive nếu đã upload
+            if ($fileId) {
+                try {
+                    $this->drive->files->delete($fileId);
+                    Log::info('Rollback: Đã xóa file trên Drive', ['file_id' => $fileId]);
+                } catch (\Exception $driveEx) {
+                    Log::error('Rollback: Không thể xóa file trên Drive', [
+                        'file_id' => $fileId,
+                        'error'   => $driveEx->getMessage(),
+                    ]);
+                }
+            }
+
+            Log::error('Lỗi khi upload bài hát: ' . $e->getMessage(), [
+                'user_id'     => $userId,
+                'file_id'     => $fileId,
+                'new_song_id' => $newSongId,
+                'trace'       => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'message' => 'Lỗi khi upload bài hát: ' . $e->getMessage()
             ], 500);

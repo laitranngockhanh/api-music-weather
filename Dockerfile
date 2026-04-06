@@ -36,6 +36,13 @@ RUN chmod -R 755 /var/www/html/resources/views
 COPY start.sh /var/www/html/start.sh
 RUN chmod +x /var/www/html/start.sh
 
+# Tạo custom php.ini với giới hạn upload lớn hơn
+RUN echo "upload_max_filesize=50M" > /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "post_max_size=55M" >> /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "memory_limit=256M" >> /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "max_execution_time=300" >> /usr/local/etc/php/conf.d/uploads.ini \
+    && echo "max_input_time=300" >> /usr/local/etc/php/conf.d/uploads.ini
+
 # Xóa cache và tối ưu hóa
 RUN php artisan route:clear
 RUN php artisan config:clear
