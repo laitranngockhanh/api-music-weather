@@ -21,17 +21,25 @@ class AlbumController extends Controller
         $userId = auth()->user()->id;
         $album = Album::where('user_id', $userId)->findOrFail($id);
 
-        $songs = $album->songs()->with(['userSongs' => function ($query) use ($userId) {
-            $query->where('user_id', $userId);
-        }])->get()->map(function ($song) use ($userId) {
-            $userSong = $song->userSongs->first();
-            return [
-                'song_id' => $song->id,
-                'custom_name' => $userSong ? $userSong->custom_name : ($song->name ?? 'Unknown'),
-                'custom_artist' => $userSong ? $userSong->custom_artist : ($song->artist ?? 'Unknown'),
-                'file_path' => $song->file_path,
-            ];
-        });
+        $songs = $album->songs()
+            ->leftJoin('user_song', function ($join) use ($userId) {
+                $join->on('songs.id', '=', 'user_song.song_id')
+                     ->where('user_song.user_id', '=', $userId);
+            })
+            ->select(
+                'songs.*',
+                'user_song.custom_name as override_name',
+                'user_song.custom_artist as override_artist'
+            )
+            ->get()
+            ->map(function ($song) {
+                return [
+                    'song_id' => $song->id,
+                    'custom_name' => $song->override_name ?? ($song->name ?? 'Unknown'),
+                    'custom_artist' => $song->override_artist ?? ($song->artist ?? 'Unknown'),
+                    'file_path' => $song->file_path,
+                ];
+            });
 
         return response()->json([
             'id' => $album->id,
