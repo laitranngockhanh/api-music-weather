@@ -16,12 +16,13 @@ Hệ thống API Backend được xây dựng bằng Laravel 10, hỗ trợ qu�
 - **Bảo Mật & Hiệu Năng**:
     - Rate Limiting (giới hạn tần suất gọi API).
     - Rollback thủ công khi upload Drive thất bại để đảm bảo tính toàn vẹn dữ liệu.
+    - Docker dùng PHP >= 8.3.36 và tắt upload progress; cấu hình reverse proxy/load balancer giới hạn request body tối đa 55 MB khi triển khai.
     - Dockerized (Sẵn sàng triển khai với Docker).
 
 ## 🛠 Tech Stack
 
 - **Framework**: Laravel 10
-- **Language**: PHP 8.1+
+- **Language**: PHP 8.3.36+
 - **Storage**: Google Drive API v3
 - **Database**: MySQL / MariaDB
 - **Authentication**: Laravel Sanctum
@@ -30,7 +31,7 @@ Hệ thống API Backend được xây dựng bằng Laravel 10, hỗ trợ qu�
 ## 📦 Cài Đặt
 
 ### 1. Yêu cầu hệ thống
-- PHP >= 8.1
+- PHP >= 8.3.36
 - Composer
 - MySQL/MariaDB
 - Tài khoản Google Cloud (để cấu hình Drive API)

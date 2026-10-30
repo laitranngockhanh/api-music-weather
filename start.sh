@@ -16,6 +16,7 @@ export PHP_CLI_SERVER_WORKERS=4
 exec php \
   -d upload_max_filesize=50M \
   -d post_max_size=55M \
+  -d session.upload_progress.enabled=Off \
   -d memory_limit=256M \
   -d max_execution_time=300 \
   -d max_input_time=300 \
